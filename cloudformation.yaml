@@ -1,0 +1,171 @@
+Resources:
+
+  TelegramRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: telegram-rest-endpoint
+      EndpointConfiguration:
+        Types:
+        - REGIONAL
+      Tags:
+        - Key: App
+          Value: TelegramLambdaDynamoApp
+
+  TelegramRestApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+    - TelegramApiGatewayMethod
+    Properties:
+      RestApiId: !Ref TelegramRestApi
+      StageName: default
+
+  TelegramApiGatewayResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt TelegramRestApi.RootResourceId
+      PathPart: telegram
+      RestApiId: !Ref TelegramRestApi
+
+  TelegramApiGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn:
+    - TelegramFunctionApiGatewayPermission
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri:
+          !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':apigateway:'
+            - !Ref AWS::Region
+            - :lambda:path/2015-03-31/functions/
+            - !GetAtt TelegramLambdaFunction.Arn
+            - /invocations
+      ResourceId: !Ref TelegramApiGatewayResource
+      RestApiId: !Ref TelegramRestApi
+
+  TelegramFunctionApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt TelegramLambdaFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !Join
+        - ''
+        - - 'arn:'
+          - !Ref AWS::Partition
+          - ':execute-api:'
+          - !Ref AWS::Region
+          - ':'
+          - !Ref AWS::AccountId
+          - ':'
+          - !Ref TelegramRestApi
+          - /*/*
+
+  TelegramLambdaFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: AppendToLogsPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: "*"
+      - PolicyName: AppendToDynamoPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:*
+            Resource: "*"
+      - PolicyName: AppendToS3Policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:*
+            Resource: "*"
+      Tags:
+        - Key: App
+          Value: TelegramLambdaDynamoApp
+
+  TelegramLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: telegram-messages
+      Runtime: python3.8
+      Handler: main.lambda_handler
+      MemorySize: 128
+      Timeout: 8
+      Code:
+        S3Bucket: cicerow-config    # S3 bucket
+        S3Key: lambda_function.zip  # Zip file inside the bucket
+      Environment:
+        Variables:
+          IMAGE_DICT: '{"info": "https://cdn-icons-png.flaticon.com/512/720/720257.png","warning": "https://cdn-icons-png.flaticon.com/512/1680/1680012.png","error": "https://cdn-icons-png.flaticon.com/512/564/564619.png","email": "https://cdn-icons-png.flaticon.com/512/552/552486.png","task": "https://cdn-icons-png.flaticon.com/512/906/906334.png","other": "https://cdn-icons-png.flaticon.com/512/178/178158.png","AcademiaDevOps": "https://academiadevops.dev.br/logo-devops.png"}'
+          DESTINATION_LIST: '[{"name": "AcadDevOps001Bot","bot_token": "0123456789:AABBCC0123456789abcdefghijkl-ABCDEF","chat_id": "012345678"},{"name": "AcadDevOps001Bot","bot_token": "0123456789:AABBCC0123456789abcdefghijkl-ABCDEF","chat_id": "012345678"}]'
+      Role: !GetAtt TelegramLambdaFunctionRole.Arn
+      Tags:
+        - Key: App
+          Value: TelegramLambdaDynamoApp
+
+  TelegramDynamoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      TableName: MensagensDoTelegram
+      Tags:
+        - Key: App
+          Value: Telegram
+
+Outputs:
+  RestAPI:
+    Description: "REST API ID inside API Gateway. Name: telegram-rest-endpoint"
+    Value:
+      Ref: TelegramRestApi
+  LambdaFunctionRole:
+    Description: "Lambda Function Role Name (permission)"
+    Value:
+      Ref:   TelegramLambdaFunctionRole
+  LambdaFunction:
+    Description: "Lambda Function Name"
+    Value:
+      Ref:   TelegramLambdaFunction
+  AcessURL:
+    Description: "API Prod stage endpoint"
+    Value: !Sub "https://${TelegramRestApi}.execute-api.${AWS::Region}.amazonaws.com/default/telegram"
+  DynamoTelegramTable:
+    Description: "DynamoDB Telegram Table"
+    Value: TelegramDynamoTable
